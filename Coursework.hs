@@ -1,4 +1,4 @@
-
+import Control.Exception
 --------------------------------------------
 --                                        --
 -- CM20256/CM50262 Functional Programming --
@@ -91,14 +91,7 @@ occurs :: Atom -> Type -> Bool
 occurs x (At y) = x==y
 occurs x (At y :-> ys) = if x/=y then occurs x ys else x==y
 occurs x (y :-> At ys) = if x==ys then x==ys else occurs x y
-
-{- 
-merge :: [Atom] -> [Atom] -> [Atom]
-merge x [] = [x]
-merge [] y = [y]
-merge (x:xs) (y:ys)
- | x <= y = x:xs:y:ys
- | otherwise = y:ys:x:xs  -}
+occurs x (y :-> ys) = occurs x y || occurs x ys
 
 findAtoms :: Type -> [Atom]
 findAtoms (At x) = [x]
@@ -282,45 +275,57 @@ instance Show Derivation where
         | otherwise             = ( l1 , m1+r1+2+l2+m2 , r2 , [ x ++ "  " ++ y | (x,y) <- zip (extend (l1+m1+r1) d1) d2])
 
 
-
+{- c1 = [("a",t1),("b",t2),("c",t3)] -}
 ------------------------- Assignment 5
-genContext :: [Var] -> [Type] -> Context
-genContext [] t = []
-genContext (v:vs) [t] = [(v, t)]++genContext vs [t]
-genContext (v:vs) (t:ts) = [(v,t)]++genContext vs ts
+genContext :: [Var] -> [Type] -> Context -> Context
+genContext [v] [t] [] = [(v,t)]
+genContext (v:vs) [t] [] = [(v,t)] ++ genContext vs [t] []
+genContext (v:vs) (t:ts) [] = [(v,t)] ++ genContext vs ts []
+
+genContext [] t c = []
+
+genContext [v] [t] [(v1,t1)] = if v==v1 then [] else [(v,t)]
+genContext (v:vs) [t] [(v1,t1)] = if v==v1 then genContext vs [t] [(v1,t1)] else  [(v,t)] ++ genContext vs [t] [(v1,t1)]
+genContext (v:vs) (t:ts) [(v1,t1)] = if v==v1 then genContext vs ts [(v1,t1)] else [(v,t)] ++ genContext vs ts [(v1,t1)]
+
+genContext [v] [t] ((v1,t1):cs) = if v==v1 then [] else  genContext [v] [t] cs
+genContext (v:vs) [t] ((v1,t1):cs) = if v==v1 then genContext vs [t] cs else genContext [v] [t] cs ++ genContext vs [t] ((v1,t1):cs)
+genContext (v:vs) (t:ts) ((v1,t1):cs) =  if v==v1 then genContext vs ts ((v1,t1):cs) else genContext [v] [t] cs ++ genContext vs ts ((v1,t1):cs)
 
 dropa :: Int -> [a] -> [a]
 dropa _ [] = []
 dropa 0 y = y
 dropa x (y:ys) = drop (x-1) ys
 
+{- n1 = Apply (Lambda "x" (Variable "x")) (Variable "y") -}
+
 derive0 :: Term -> Derivation
-derive0 t = aux ((genContext (free (t)) [(At "")]), t, At "") where
+derive0 t = aux ((genContext (free (t)) [(At "")] []), t, At "") where
   aux :: Judgement -> Derivation
   aux (c,Variable v,ty) = Axiom (c ,Variable v,ty)
-  aux (c,Lambda v t, ty) = Abstraction (c ,Lambda v t, ty) (aux ((genContext (free t) [ty]) ++ c, t, ty))
-  aux (c, Apply t t2, ty) = Application (c, Apply t t2, ty) (aux ((genContext (free t) [ty]) ++ c, t, ty)) (aux ((genContext (free t2) [ty]) ++ c, t2, ty))
+  aux (c,Lambda v t, ty) = Abstraction (c ,Lambda v t, ty) (aux ((genContext (free t) [ty] c) ++ c, t, ty))
+  aux (c, Apply t t2, ty) = Application (c, Apply t t2, ty) (aux ((genContext (free t) [ty] c) ++ c, t, ty)) (aux ((genContext (free t2) [ty] c) ++ c, t2, ty))
 
 
 derive1 :: Term -> Derivation
-derive1 t = aux (tail atoms) ((genContext (free (t)) [At a | a <- atoms]), t, At (head atoms))
+derive1 t = aux (tail atoms) ((genContext (free (t)) [At a | a <- atoms] []), t, At (head atoms))
   where
     aux :: [Atom] -> Judgement -> Derivation
     aux a (c,Variable v,ty) = Axiom (c ,Variable v, At (head a))
 
     aux a (c,Lambda v t, ty) = Abstraction (c ,Lambda v t, At (head a))
      (aux (dropa (length (free t)+1) a)
-      ((genContext (free t) [At a | a <- (tail a)]) ++ c, t, ty))
+      ((genContext (free t) [At a | a <- (tail a)] c) ++ c, t, ty))
 
     aux a (c, Apply t t2, ty) = Application 
     
      (c, Apply t t2, At (head a))
 
      (aux (dropa (length (free t)+1) [x | (x,i) <- zip a [0..], even i])
-       ((genContext (free t) (tail [At x | (x,i) <- zip a [0..], even i])) ++ c, t, ty))
+       ((genContext (free t) (tail [At x | (x,i) <- zip a [0..], even i] ) c) ++ c, t, ty))
 
      (aux (dropa (length (free t2)+1) [x | (x,i) <- zip a [0..], odd i] )
-       ((genContext (free t2) (tail [At x | (x,i) <- zip a [0..], odd i])) ++ c, t2, ty))
+       ((genContext (free t2) (tail [At x | (x,i) <- zip a [0..], odd i]) c) ++ c, t2, ty))
 
 extractType :: Judgement -> Type
 extractType (_,_,ty) = ty
@@ -336,3 +341,4 @@ upairs (Application (c,Apply t t2,ty) d d2)=[(extractType (conclusion d),extract
 
 derive :: Term -> Derivation
 derive t =  subs_der (unify (upairs (derive1 t))) (derive1 t)
+
